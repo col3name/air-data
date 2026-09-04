@@ -301,7 +301,7 @@ def add_regimes(df):
         [-np.inf, -120, -30, 30, 120, np.inf],
         labels=[
             "RECOVERING_FAST", "RECOVERING", "STABLE",
-            "BUILDING", "BUILDING_FAST",
+            "BUILDING", "BUILDING_FAST"
         ],
     ).astype(str)
 
