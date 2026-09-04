@@ -13,7 +13,6 @@ from train1 import (
     build_features,
     create_model,
     get_departure_training_rows,
-    rmse,
     train_model,
     _prepare_xy,
 )
@@ -30,22 +29,34 @@ MODEL_DIR = Path("models")
 
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
+# September 2025 training data
 TRAIN_FILE = DATA_DIR / "training_2025-09-01_2025-10-01.parquet"
 
-# Expected ranking movement dataset.
-#
-# Change this if your actual file has another name.
+# Ranking / test movement dataset
 RANKING_FILE = DATA_DIR / "ranking.parquet"
 
-# Submission template supplied by the competition.
+# Official submission template
 SUBMISSION_TEMPLATE = DATA_DIR / "submitting.parquet"
 
-# Final generated submission.
-SUBMISSION_OUTPUT = Path("submitting.parquet")
+# ============================================================
+# IMPORTANT:
+# Competition requires:
+#
+# kind-earthquake_v1.parquet
+#
+# Change VERSION to 2, 3, ... for later submissions.
+# ============================================================
+
+TEAM_NAME = "kind-earthquake"
+VERSION = 1
+
+SUBMISSION_OUTPUT = Path(
+    f"{TEAM_NAME}_v{VERSION}.parquet"
+)
 
 TRAIN_MONTH = 9
 
-# Validation = last 15% of September.
+# Last 15% of September = validation
 VALIDATION_FRACTION = 0.15
 
 
@@ -56,7 +67,8 @@ VALIDATION_FRACTION = 0.15
 def load_september_data() -> pd.DataFrame:
     if not TRAIN_FILE.exists():
         raise FileNotFoundError(
-            f"Training file not found:\n{TRAIN_FILE}"
+            f"\nTraining file not found:\n"
+            f"  {TRAIN_FILE}\n"
         )
 
     print("=" * 70)
@@ -76,9 +88,10 @@ def load_ranking_data() -> pd.DataFrame:
     if not RANKING_FILE.exists():
         raise FileNotFoundError(
             "\nRanking dataset was not found.\n"
-            f"Expected:\n  {RANKING_FILE}\n\n"
-            "Put the ranking movement parquet into the data/ directory "
-            "or change RANKING_FILE in train2.1.py."
+            f"Expected:\n"
+            f"  {RANKING_FILE}\n\n"
+            "Put the ranking movement parquet into data/ "
+            "or change RANKING_FILE in train2.2.py."
         )
 
     print("\n" + "=" * 70)
@@ -98,7 +111,8 @@ def load_submission_template() -> pd.DataFrame:
     if not SUBMISSION_TEMPLATE.exists():
         raise FileNotFoundError(
             "\nSubmission template was not found.\n"
-            f"Expected:\n  {SUBMISSION_TEMPLATE}"
+            f"Expected:\n"
+            f"  {SUBMISSION_TEMPLATE}"
         )
 
     print("\n" + "=" * 70)
@@ -119,7 +133,8 @@ def load_submission_template() -> pd.DataFrame:
 
     if missing:
         raise ValueError(
-            f"Submission template is missing columns: {sorted(missing)}"
+            "Submission template is missing columns: "
+            f"{sorted(missing)}"
         )
 
     return df
@@ -140,7 +155,8 @@ def validate_training_data(df: pd.DataFrame) -> None:
 
     if missing:
         raise ValueError(
-            f"Training data is missing columns: {sorted(missing)}"
+            "Training data is missing columns: "
+            f"{sorted(missing)}"
         )
 
 
@@ -155,7 +171,8 @@ def validate_ranking_data(df: pd.DataFrame) -> None:
 
     if missing:
         raise ValueError(
-            f"Ranking data is missing columns: {sorted(missing)}"
+            "Ranking data is missing columns: "
+            f"{sorted(missing)}"
         )
 
 
@@ -173,7 +190,7 @@ def train_september_model():
     print("=" * 70)
 
     # IMPORTANT:
-    # build_features() must be applied to ALL movements,
+    # Build features on ALL movements:
     # arrivals + departures.
     all_movements = build_features(raw)
 
@@ -182,8 +199,10 @@ def train_september_model():
         f"{all_movements.shape}"
     )
 
-    # Keep only departures with known target.
-    train_df = get_departure_training_rows(all_movements)
+    # Keep departures with known taxi-out target.
+    train_df = get_departure_training_rows(
+        all_movements
+    )
 
     print(
         f"Departure training dataset: "
@@ -191,7 +210,9 @@ def train_september_model():
     )
 
     if train_df.empty:
-        raise ValueError("No valid departure training rows found.")
+        raise ValueError(
+            "No valid departure training rows found."
+        )
 
     # Make sure month exists.
     if "MONTH" not in train_df.columns:
@@ -209,7 +230,10 @@ def train_september_model():
         .to_string()
     )
 
-    # We intentionally train only on September.
+    # ========================================================
+    # September only
+    # ========================================================
+
     train_df = train_df[
         train_df["MONTH"].eq(TRAIN_MONTH)
     ].copy()
@@ -218,24 +242,32 @@ def train_september_model():
         TIME_COL
     ).reset_index(drop=True)
 
+    if train_df.empty:
+        raise ValueError(
+            f"No training rows for month {TRAIN_MONTH}."
+        )
+
     print("\n" + "=" * 70)
     print("SEPTEMBER TRAINING SET")
     print("=" * 70)
 
     print(f"Rows: {len(train_df):,}")
     print(
-        f"Target mean:   {train_df[TARGET].mean():.2f}"
+        f"Target mean:   "
+        f"{train_df[TARGET].mean():.2f}"
     )
     print(
-        f"Target median: {train_df[TARGET].median():.2f}"
+        f"Target median: "
+        f"{train_df[TARGET].median():.2f}"
     )
     print(
-        f"Target std:    {train_df[TARGET].std():.2f}"
+        f"Target std:    "
+        f"{train_df[TARGET].std():.2f}"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Temporal validation
-    # --------------------------------------------------------
+    # ========================================================
 
     n = len(train_df)
 
@@ -262,7 +294,6 @@ def train_september_model():
     print(
         f"Fit rows:   {len(fit_df):,}"
     )
-
     print(
         f"Valid rows: {len(valid_df):,}"
     )
@@ -278,9 +309,9 @@ def train_september_model():
             f"{valid_df[TIME_COL].max()}"
         )
 
-    # --------------------------------------------------------
-    # CV / early stopping
-    # --------------------------------------------------------
+    # ========================================================
+    # CatBoost CV / early stopping
+    # ========================================================
 
     model, score, features, best_iteration = train_model(
         fit_df,
@@ -293,11 +324,15 @@ def train_september_model():
 
     print(f"RMSE: {score:.4f}")
     print(
-        f"Best iterations: {best_iteration}"
+        f"Best iterations: "
+        f"{best_iteration}"
     )
 
-    # Save CV result.
-    cv_path = MODEL_DIR / "python2_1_cv.csv"
+    # ========================================================
+    # Save CV result
+    # ========================================================
+
+    cv_path = MODEL_DIR / "train2_2_cv.csv"
 
     pd.DataFrame(
         [
@@ -314,11 +349,13 @@ def train_september_model():
         index=False,
     )
 
-    print(f"Saved CV record: {cv_path}")
+    print(
+        f"Saved CV record: {cv_path}"
+    )
 
-    # --------------------------------------------------------
-    # Final model
-    # --------------------------------------------------------
+    # ========================================================
+    # FINAL MODEL
+    # ========================================================
 
     print("\n" + "=" * 70)
     print("TRAINING FINAL SEPTEMBER MODEL")
@@ -356,6 +393,10 @@ def train_september_model():
         cat_features=cat_features,
     )
 
+    # ========================================================
+    # Save model
+    # ========================================================
+
     model_path = (
             MODEL_DIR /
             "catboost_month9_final.cbm"
@@ -369,11 +410,13 @@ def train_september_model():
         f"\nSaved model: {model_path}"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Metadata
-    # --------------------------------------------------------
+    # ========================================================
 
     metadata = {
+        "team": TEAM_NAME,
+        "submission_version": VERSION,
         "features": features,
         "categorical_features": cat_features,
         "iterations": int(best_iteration),
@@ -408,9 +451,9 @@ def train_september_model():
         f"Saved metadata: {metadata_path}"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Feature importance
-    # --------------------------------------------------------
+    # ========================================================
 
     importance = pd.DataFrame(
         {
@@ -441,7 +484,6 @@ def train_september_model():
     )
 
     print("\nTop 30 features:")
-
     print(
         importance
         .head(30)
@@ -460,22 +502,12 @@ def train_september_model():
 
 
 # ============================================================
-# SUBMISSION
+# PREDICTION FEATURES
 # ============================================================
 
 def prepare_prediction_features(
         ranking_df: pd.DataFrame,
-        training_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Build the exact same feature pipeline used during training.
-
-    Ranking data does not contain the hidden target, therefore
-    queue features for ranking rows cannot use hidden taxi times.
-
-    We prepend historical training movements so that known
-    historical taxi-out times can be used for queue statistics.
-    """
 
     print("\n" + "=" * 70)
     print("BUILDING RANKING FEATURES")
@@ -483,53 +515,21 @@ def prepare_prediction_features(
 
     ranking_df = ranking_df.copy()
 
-    # Make sure target exists for build_features().
-    # It is needed by add_queue_features(), but ranking target
-    # itself is unknown.
+    # build_features() expects TARGET to exist.
+    # Ranking target is hidden, therefore NaN.
     if TARGET not in ranking_df.columns:
         ranking_df[TARGET] = np.nan
 
-    # --------------------------------------------------------
-    # Historical data
-    # --------------------------------------------------------
-    #
-    # We use training data as historical known departures.
-    #
-    # The target is known for training rows.
-    #
-    # This allows PREV_TAXI_* features to use historical taxi
-    # times before ranking movements.
-    # --------------------------------------------------------
-
-    history_columns = [
-        c
-        for c in training_df.columns
-        if c in ranking_df.columns
-    ]
-
-    # Only use raw-like columns needed by build_features.
-    #
-    # Instead of using already-featured training_df, we need
-    # the original movement representation.
-    #
-    # Therefore this function expects ranking data to already
-    # contain the relevant raw movement columns.
-    #
-    # If the ranking file contains only ranking movements,
-    # we simply build features on ranking itself.
-    #
-    # The queue features will then be empty at the beginning
-    # of the ranking period.
-
-    combined = ranking_df.copy()
-
     print(
         f"Ranking movements: "
-        f"{len(combined):,}"
+        f"{len(ranking_df):,}"
     )
 
+    # IMPORTANT:
+    # Use exactly the same feature builder
+    # as during training.
     featured = build_features(
-        combined
+        ranking_df
     )
 
     print(
@@ -540,25 +540,26 @@ def prepare_prediction_features(
     return featured
 
 
-def make_submission(
+# ============================================================
+# GENERATE PREDICTIONS
+# ============================================================
+
+def generate_predictions(
         model,
         features: list[str],
         cat_features: list[str],
         ranking_df: pd.DataFrame,
 ) -> pd.DataFrame:
 
-    # --------------------------------------------------------
-    # Build features
-    # --------------------------------------------------------
-
-    ranking_features = prepare_prediction_features(
-        ranking_df,
-        pd.DataFrame(),
+    ranking_features = (
+        prepare_prediction_features(
+            ranking_df
+        )
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Select departures
-    # --------------------------------------------------------
+    # ========================================================
 
     if "IS_DEPARTURE" not in ranking_features.columns:
         raise ValueError(
@@ -581,18 +582,37 @@ def make_submission(
             "in ranking dataset."
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Check IDs
-    # --------------------------------------------------------
+    # ========================================================
 
     if "MVT_ID_mvt" not in departures.columns:
         raise ValueError(
-            "MVT_ID_mvt is missing from ranking dataset."
+            "MVT_ID_mvt is missing from "
+            "ranking dataset."
         )
 
-    # --------------------------------------------------------
-    # Prepare X
-    # --------------------------------------------------------
+    if departures["MVT_ID_mvt"].isna().any():
+        raise ValueError(
+            "Ranking dataset contains "
+            "NaN MVT_ID_mvt values."
+        )
+
+    if departures["MVT_ID_mvt"].duplicated().any():
+        duplicated = departures[
+            departures["MVT_ID_mvt"]
+            .duplicated(keep=False)
+        ]
+
+        raise ValueError(
+            "Duplicate MVT_ID_mvt found "
+            "in ranking departures.\n"
+            f"{duplicated.head(20)}"
+        )
+
+    # ========================================================
+    # Check model features
+    # ========================================================
 
     missing_features = [
         f
@@ -602,12 +622,17 @@ def make_submission(
 
     if missing_features:
         raise ValueError(
-            "Ranking dataset is missing model features:\n"
+            "Ranking dataset is missing "
+            "model features:\n"
             + "\n".join(
                 f"  - {x}"
                 for x in missing_features
             )
         )
+
+    # ========================================================
+    # Prepare X
+    # ========================================================
 
     X_pred = departures[
         features
@@ -620,9 +645,9 @@ def make_submission(
             .astype(str)
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # Predict
-    # --------------------------------------------------------
+    # ========================================================
 
     print("\n" + "=" * 70)
     print("GENERATING PREDICTIONS")
@@ -642,6 +667,12 @@ def make_submission(
         predictions,
         0.0,
     )
+
+    # Check finite values.
+    if not np.isfinite(predictions).all():
+        raise ValueError(
+            "Model produced NaN or infinite predictions."
+        )
 
     print(
         f"Prediction min:    "
@@ -663,10 +694,6 @@ def make_submission(
         f"{np.median(predictions):.2f}"
     )
 
-    # --------------------------------------------------------
-    # Prediction dataframe
-    # --------------------------------------------------------
-
     predictions_df = pd.DataFrame(
         {
             "MVT_ID_mvt": departures[
@@ -676,29 +703,12 @@ def make_submission(
         }
     )
 
-    # IDs must be unique.
-    if predictions_df[
-        "MVT_ID_mvt"
-    ].duplicated().any():
-
-        duplicated = (
-            predictions_df[
-                predictions_df[
-                    "MVT_ID_mvt"
-                ].duplicated(
-                    keep=False
-                )
-            ]
-        )
-
-        raise ValueError(
-            "Duplicate MVT_ID_mvt found "
-            "in predictions.\n"
-            f"{duplicated.head(20)}"
-        )
-
     return predictions_df
 
+
+# ============================================================
+# BUILD FINAL SUBMISSION
+# ============================================================
 
 def build_final_submission(
         predictions_df: pd.DataFrame,
@@ -719,114 +729,104 @@ def build_final_submission(
     ]
 
     print(
-        f"Template IDs:    "
-        f"{len(template_ids):,}"
+        f"Template IDs:   {len(template_ids):,}"
     )
 
     print(
-        f"Prediction IDs:  "
-        f"{len(prediction_ids):,}"
+        f"Prediction IDs: {len(prediction_ids):,}"
     )
 
-    # --------------------------------------------------------
-    # ID checks
-    # --------------------------------------------------------
+    # ========================================================
+    # Check ID sets
+    # ========================================================
 
-    missing_predictions = (
-        template_ids
-        .loc[
-            ~template_ids.isin(
-                prediction_ids
-            )
-        ]
-    )
+    missing_predictions = template_ids[
+        ~template_ids.isin(prediction_ids)
+    ]
 
-    extra_predictions = (
-        prediction_ids
-        .loc[
-            ~prediction_ids.isin(
-                template_ids
-            )
-        ]
-    )
+    extra_predictions = prediction_ids[
+        ~prediction_ids.isin(template_ids)
+    ]
 
     if len(missing_predictions):
+        print("\n" + "!" * 70)
         print(
-            "\nWARNING:"
-            f" {len(missing_predictions):,} "
+            f"ERROR: {len(missing_predictions):,} "
             "submission IDs have no prediction."
         )
 
+        print("\nFirst missing IDs:")
         print(
             missing_predictions
             .head(20)
             .to_list()
         )
 
+        raise ValueError(
+            "Not all submission IDs have predictions. "
+            "Submission was NOT created."
+        )
+
     if len(extra_predictions):
+        print("\n" + "!" * 70)
         print(
-            "\nWARNING:"
-            f" {len(extra_predictions):,} "
+            f"ERROR: {len(extra_predictions):,} "
             "predictions are not present "
             "in submitting.parquet."
         )
 
-    # --------------------------------------------------------
-    # Merge
-    # --------------------------------------------------------
+        print("\nFirst extra IDs:")
+        print(
+            extra_predictions
+            .head(20)
+            .to_list()
+        )
 
-    pred_map = predictions_df.set_index(
-        "MVT_ID_mvt"
-    )[TARGET]
+        raise ValueError(
+            "Ranking contains IDs not present "
+            "in submission template."
+        )
 
-    result = template.copy()
+    # ========================================================
+    # Check exact ID count
+    # ========================================================
+
+    if len(template_ids) != len(prediction_ids):
+        raise ValueError(
+            "Template and prediction row counts differ."
+        )
+
+    # ========================================================
+    # Map predictions to template
+    # ========================================================
+
+    pred_map = (
+        predictions_df
+        .set_index("MVT_ID_mvt")[TARGET]
+    )
+
+    result = template[
+        ["MVT_ID_mvt"]
+    ].copy()
 
     result[TARGET] = (
         result["MVT_ID_mvt"]
         .map(pred_map)
     )
 
-    # --------------------------------------------------------
-    # Fallback for missing predictions
-    # --------------------------------------------------------
+    # ========================================================
+    # Final checks
+    # ========================================================
 
-    missing_mask = result[
-        TARGET
-    ].isna()
-
-    missing_count = int(
-        missing_mask.sum()
-    )
-
-    if missing_count:
-        print(
-            f"\nFilling {missing_count:,} "
-            "missing predictions."
+    if result[TARGET].isna().any():
+        missing_count = int(
+            result[TARGET].isna().sum()
         )
 
-        # Conservative fallback.
-        #
-        # If IDs are missing from ranking feature data,
-        # use the median predicted taxi time rather than 0.
-        fallback = float(
-            predictions_df[
-                TARGET
-            ].median()
+        raise ValueError(
+            f"Final submission contains "
+            f"{missing_count:,} NaN predictions."
         )
-
-        print(
-            f"Fallback prediction: "
-            f"{fallback:.2f}"
-        )
-
-        result.loc[
-            missing_mask,
-            TARGET
-        ] = fallback
-
-    # --------------------------------------------------------
-    # Final cleanup
-    # --------------------------------------------------------
 
     result[TARGET] = pd.to_numeric(
         result[TARGET],
@@ -838,17 +838,14 @@ def build_final_submission(
         0.0,
     )
 
-    # Required columns only.
-    result = result[
-        [
-            "MVT_ID_mvt",
-            TARGET,
-        ]
-    ].copy()
+    if not np.isfinite(
+            result[TARGET].to_numpy()
+    ).all():
 
-    # --------------------------------------------------------
-    # Final validation
-    # --------------------------------------------------------
+        raise ValueError(
+            "Final submission contains "
+            "non-finite predictions."
+        )
 
     if len(result) != len(template):
         raise ValueError(
@@ -860,58 +857,24 @@ def build_final_submission(
     ].duplicated().any():
 
         raise ValueError(
-            "Duplicate MVT_ID_mvt in final submission."
+            "Duplicate MVT_ID_mvt "
+            "in final submission."
         )
 
-    if result[
-        TARGET
-    ].isna().any():
+    # ========================================================
+    # EXACT submission columns
+    # ========================================================
 
-        raise ValueError(
-            "Final submission contains NaN predictions."
-        )
+    result = result[
+        [
+            "MVT_ID_mvt",
+            TARGET,
+        ]
+    ].copy()
 
-    if not np.isfinite(
-            result[TARGET].to_numpy()
-    ).all():
-
-        raise ValueError(
-            "Final submission contains "
-            "non-finite predictions."
-        )
-
-    print("\nFINAL SUBMISSION:")
-    print(
-        f"Rows: {len(result):,}"
-    )
-
-    print(
-        f"NaN:  {result[TARGET].isna().sum():,}"
-    )
-
-    print(
-        f"Min:  {result[TARGET].min():.2f}"
-    )
-
-    print(
-        f"Max:  {result[TARGET].max():.2f}"
-    )
-
-    print(
-        f"Mean: {result[TARGET].mean():.2f}"
-    )
-
-    print("\nFirst rows:")
-
-    print(
-        result.head(10).to_string(
-            index=False
-        )
-    )
-
-    # --------------------------------------------------------
-    # Save
-    # --------------------------------------------------------
+    # ========================================================
+    # Save parquet
+    # ========================================================
 
     result.to_parquet(
         SUBMISSION_OUTPUT,
@@ -927,8 +890,43 @@ def build_final_submission(
     )
 
     print(
+        f"Rows: {len(result):,}"
+    )
+
+    print(
+        f"Columns: {list(result.columns)}"
+    )
+
+    print(
         f"Size: "
         f"{SUBMISSION_OUTPUT.stat().st_size / 1024:.1f} KB"
+    )
+
+    print(
+        f"NaN: "
+        f"{result[TARGET].isna().sum():,}"
+    )
+
+    print(
+        f"Min: "
+        f"{result[TARGET].min():.2f}"
+    )
+
+    print(
+        f"Max: "
+        f"{result[TARGET].max():.2f}"
+    )
+
+    print(
+        f"Mean: "
+        f"{result[TARGET].mean():.2f}"
+    )
+
+    print("\nFirst rows:")
+    print(
+        result
+        .head(10)
+        .to_string(index=False)
     )
 
     return result
@@ -943,12 +941,24 @@ def main():
     print("\n")
     print("=" * 70)
     print("PRC DATA CHALLENGE 2026")
-    print("train2.1 — September Taxi-Out Model")
+    print("train2.2 — September Taxi-Out Model")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # 1. Train
-    # --------------------------------------------------------
+    print(
+        f"\nTeam: {TEAM_NAME}"
+    )
+
+    print(
+        f"Submission version: v{VERSION}"
+    )
+
+    print(
+        f"Output: {SUBMISSION_OUTPUT}"
+    )
+
+    # ========================================================
+    # 1. TRAIN
+    # ========================================================
 
     (
         model,
@@ -960,9 +970,9 @@ def main():
         best_iteration,
     ) = train_september_model()
 
-    # --------------------------------------------------------
-    # 2. Load ranking data
-    # --------------------------------------------------------
+    # ========================================================
+    # 2. LOAD RANKING DATA
+    # ========================================================
 
     ranking_df = load_ranking_data()
 
@@ -970,28 +980,28 @@ def main():
         ranking_df
     )
 
-    # --------------------------------------------------------
-    # 3. Generate predictions
-    # --------------------------------------------------------
+    # ========================================================
+    # 3. GENERATE PREDICTIONS
+    # ========================================================
 
-    predictions_df = make_submission(
+    predictions_df = generate_predictions(
         model=model,
         features=features,
         cat_features=cat_features,
         ranking_df=ranking_df,
     )
 
-    # --------------------------------------------------------
-    # 4. Build final submission
-    # --------------------------------------------------------
+    # ========================================================
+    # 4. BUILD FINAL SUBMISSION
+    # ========================================================
 
     submission = build_final_submission(
         predictions_df
     )
 
-    # --------------------------------------------------------
-    # 5. Final summary
-    # --------------------------------------------------------
+    # ========================================================
+    # 5. FINAL SUMMARY
+    # ========================================================
 
     print("\n" + "=" * 70)
     print("DONE")
@@ -1017,10 +1027,20 @@ def main():
         f"{SUBMISSION_OUTPUT}"
     )
 
-    print("\nReady for upload:")
+    print("\nREADY FOR UPLOAD:")
     print(
-        "  submitting.parquet"
+        f"  {SUBMISSION_OUTPUT}"
     )
+
+    print("\nSubmission format:")
+    print(
+        "  MVT_ID_mvt"
+    )
+    print(
+        f"  {TARGET}"
+    )
+
+    print("\n" + "=" * 70)
 
 
 if __name__ == "__main__":
